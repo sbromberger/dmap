@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/sbromberger/dmap"
 	mpi "github.com/sbromberger/gompi"
@@ -34,21 +33,21 @@ func main() {
 			d.Set(key(i), val(100+i))
 		}
 	}
+	fmt.Printf("%d: count = %v\n", myRank, d.GetCount())
 	o.Barrier()
 
 	if myRank == 0 {
 		fmt.Println("Barrier")
-	}
-	time.Sleep(10 * time.Second)
-	for i := 0; i < o.Size(); i++ {
-		if myRank == i {
-			fmt.Printf("%d: %v\n", i, d.Map)
-		}
 	}
 	if myRank == 0 {
 		fmt.Println("End")
 	}
 	o.Barrier()
 	d.Stop()
+	for i := 0; i < o.Size(); i++ {
+		if myRank == i {
+			fmt.Printf("%d: %v\n", i, d.Map)
+		}
+	}
 	mpi.Stop()
 }
