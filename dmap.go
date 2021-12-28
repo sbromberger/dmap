@@ -50,9 +50,14 @@ type SafeCounter struct {
 	recv uint64
 	sync.RWMutex
 }
+
+type SafeMap[K KeyType, V ValType] struct {
+	Map map[K]V
+	sync.RWMutex
+}
 type DMap[K KeyType, V ValType] struct {
 	o        *mpi.Communicator
-	Map      map[K]V
+	Map      *SafeMap[K, V]
 	myRank   int
 	Inbox    chan Message[K, V]
 	b        bytes.Buffer
@@ -60,10 +65,11 @@ type DMap[K KeyType, V ValType] struct {
 }
 
 func NewDMap[K KeyType, V ValType](o *mpi.Communicator) DMap[K, V] {
-	d := make(map[K]V)
 	r := o.Rank()
 	inbox := make(chan Message[K, V], 100)
-	dm := DMap[K, V]{o: o, Map: d, myRank: r, Inbox: inbox, msgCount: new(SafeCounter)}
+	sm := new(SafeMap[K, V])
+	sm.Map = make(map[K]V)
+	dm := DMap[K, V]{o: o, Map: sm, myRank: r, Inbox: inbox, msgCount: new(SafeCounter)}
 	go recv(dm)
 	gob.Register(Message[K, V]{})
 	return dm
@@ -90,11 +96,13 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 		}
 		switch tag {
 		case int(MsgGet):
-			fmt.Printf("%d: received get %v\n", dmap.myRank, rmsg.Key)
+			// fmt.Printf("%d: received get %v\n", dmap.myRank, rmsg.Key)
 			dmap.Inbox <- rmsg
 		case int(MsgSet):
-			fmt.Printf("%d: received set %v -> %v (raw %v | %v)\n", dmap.myRank, rmsg.Key, rmsg.Val, recvbytes, b)
-			dmap.Map[rmsg.Key] = rmsg.Val
+			// fmt.Printf("%d: received set %v -> %v\n", dmap.myRank, rmsg.Key, rmsg.Val)
+			dmap.Map.Lock()
+			dmap.Map.Map[rmsg.Key] = rmsg.Val
+			dmap.Map.Unlock()
 		default:
 			log.Fatal("invalid message type: ", tag)
 		}
@@ -102,7 +110,7 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 }
 func sendMsg[K KeyType, V ValType](d *DMap[K, V], msg *Message[K, V], dest int) {
 	encoded := EncodeMsg(*msg, &d.b)
-	fmt.Printf("%d: encoded message %v is %v; sending to %d\n", d.o.Rank(), *msg, encoded, dest)
+	// fmt.Printf("%d: encoded message %v is %v; sending to %d\n", d.o.Rank(), *msg, encoded, dest)
 	d.o.SendBytes(encoded, dest, int(msg.Type))
 	d.msgCount.Lock()
 	d.msgCount.sent++
@@ -112,7 +120,9 @@ func sendMsg[K KeyType, V ValType](d *DMap[K, V], msg *Message[K, V], dest int) 
 func (m *DMap[K, V]) Get(k K) (V, bool) {
 	dest := k.Hash() % m.o.Size()
 	if dest == m.myRank {
-		val, found := m.Map[k]
+		m.Map.RLock()
+		val, found := m.Map.Map[k]
+		m.Map.RUnlock()
 		return val, found
 	}
 	msg := Message[K, V]{Type: MsgGet, Key: k}
@@ -129,11 +139,13 @@ func (m *DMap[K, V]) Get(k K) (V, bool) {
 func (m *DMap[K, V]) Set(k K, v V) {
 	dest := k.Hash() % m.o.Size()
 	if dest == m.myRank {
-		m.Map[k] = v
+		m.Map.Lock()
+		m.Map.Map[k] = v
+		m.Map.Unlock()
 		return
 	}
 	msg := Message[K, V]{Type: MsgSet, Key: k, Val: v}
-	fmt.Printf("%d: sending set msg to %d: %v -> %v\n", m.myRank, dest, k, v)
+	// fmt.Printf("%d: sending set msg to %d: %v -> %v\n", m.myRank, dest, k, v)
 	sendMsg(m, &msg, dest)
 	return
 }
@@ -143,17 +155,27 @@ func (m *DMap[K, V]) Barrier() {
 	localCt := make([]uint64, 2)
 
 	lastsent, lastrecv := uint64(1), uint64(1)
-	for globalCt[0] != globalCt[1] && globalCt[0] != lastsent && globalCt[1] != lastrecv {
+	for (globalCt[0] != globalCt[1]) || (globalCt[0] != lastsent) || (globalCt[1] != lastrecv) {
 		lastsent, lastrecv = globalCt[0], globalCt[1]
 		localCt[0], localCt[1] = m.GetCount()
 		m.o.AllreduceUint64s(globalCt, localCt, mpi.OpSum, 0)
 		// fmt.Printf("%d: Barrier: local = %v, global = %v\n", m.myRank, localCt, globalCt)
 		time.Sleep(10 * time.Millisecond)
 	}
+	// lastsent, lastrecv = uint64(1), uint64(1)
+	// for globalCt[0] != globalCt[1] && globalCt[0] != lastsent && globalCt[1] != lastrecv {
+	// 	lastsent, lastrecv = globalCt[0], globalCt[1]
+	// 	localCt[0], localCt[1] = m.GetCount()
+	// 	m.o.AllreduceUint64s(globalCt, localCt, mpi.OpSum, 0)
+	// 	fmt.Printf("%d: Barrier: local = %v, global = %v\n", m.myRank, localCt, globalCt)
+	// 	time.Sleep(10 * time.Millisecond)
+	// }
 }
 
 func (m *DMap[K, V]) Stop() {
+	// fmt.Println("in stop: pre-barrier")
 	m.Barrier()
+	// fmt.Println("in stop: post-barrier")
 	m.o.SendString("done", m.myRank, m.o.MaxTag)
 }
 
