@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 	"time"
 
@@ -78,7 +79,7 @@ func NewDMap[K KeyType, V ValType](o *mpi.Communicator) DMap[K, V] {
 func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 	defer close(dmap.Inbox)
 	defer fmt.Printf("%d: recv terminating\n", dmap.myRank)
-	// runtime.LockOSThread()
+	runtime.LockOSThread()
 	for {
 		recvbytes, status := dmap.o.MrecvBytes(mpi.AnySource, mpi.AnyTag)
 		tag := status.GetTag()
