@@ -63,9 +63,9 @@ type DMap[K KeyType, V ValType] struct {
 	msgCount *SafeCounter
 }
 
-func NewDMap[K KeyType, V ValType](o *mpi.Communicator) DMap[K, V] {
+func NewDMap[K KeyType, V ValType](o *mpi.Communicator, chansize int) DMap[K, V] {
 	r := o.Rank()
-	inbox := make(chan Message[K, V], 100)
+	inbox := make(chan Message[K, V], chansize)
 	sm := new(SafeMap[K, V])
 	sm.Map = make(map[K]V)
 
