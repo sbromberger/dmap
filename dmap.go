@@ -34,9 +34,9 @@ type Message[K KeyType, V ValType] struct {
 	Val  V
 }
 
-func EncodeMsg[K KeyType, V ValType](msg Message[K, V], b *bytes.Buffer) []byte {
-	b.Reset()
-	enc := gob.NewEncoder(b)
+func EncodeMsg[K KeyType, V ValType](msg Message[K, V]) []byte {
+	var b bytes.Buffer
+	enc := gob.NewEncoder(&b)
 	err := enc.Encode(msg)
 	if err != nil {
 		fmt.Printf("ERROR IN ENCODE: %v", err)
@@ -60,7 +60,6 @@ type DMap[K KeyType, V ValType] struct {
 	Map      *SafeMap[K, V]
 	myRank   int
 	Inbox    chan Message[K, V]
-	b        bytes.Buffer
 	msgCount *SafeCounter
 }
 
@@ -69,6 +68,7 @@ func NewDMap[K KeyType, V ValType](o *mpi.Communicator) DMap[K, V] {
 	inbox := make(chan Message[K, V], 100)
 	sm := new(SafeMap[K, V])
 	sm.Map = make(map[K]V)
+
 	dm := DMap[K, V]{o: o, Map: sm, myRank: r, Inbox: inbox, msgCount: new(SafeCounter)}
 	go recv(dm)
 	gob.Register(Message[K, V]{})
@@ -76,6 +76,7 @@ func NewDMap[K KeyType, V ValType](o *mpi.Communicator) DMap[K, V] {
 }
 
 func recv[K KeyType, V ValType](dmap DMap[K, V]) {
+	defer fmt.Printf("%d: recv terminating\n", dmap.myRank)
 	// runtime.LockOSThread()
 	for {
 		recvbytes, status := dmap.o.MrecvBytes(mpi.AnySource, mpi.AnyTag)
@@ -87,7 +88,7 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 		if tag == dmap.o.MaxTag {
 			return
 		}
-		b := bytes.NewBuffer(recvbytes)
+		b := bytes.NewReader(recvbytes)
 		dec := gob.NewDecoder(b)
 		var rmsg Message[K, V]
 		if err := dec.Decode(&rmsg); err != nil {
@@ -109,7 +110,7 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 	}
 }
 func sendMsg[K KeyType, V ValType](d *DMap[K, V], msg *Message[K, V], dest int) {
-	encoded := EncodeMsg(*msg, &d.b)
+	encoded := EncodeMsg(*msg)
 	// fmt.Printf("%d: encoded message %v is %v; sending to %d\n", d.o.Rank(), *msg, encoded, dest)
 	d.o.SendBytes(encoded, dest, int(msg.Type))
 	d.msgCount.Lock()
