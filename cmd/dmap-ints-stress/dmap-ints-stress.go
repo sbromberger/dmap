@@ -39,6 +39,7 @@ func main() {
 	t0 := mpi.WorldTime()
 	for i := 0; i < n; i++ {
 		k := i*size + myRank + 1
+		// k := i*size + myRank
 		v := k
 		d.Set(key(k), val(v))
 
@@ -56,7 +57,6 @@ func main() {
 		}
 	}
 	if myRank == 0 {
-		fmt.Printf("total elapsed %v s, average %v µs\n", t1-t0, (t1-t0)*1000000/float64(n))
 
 		fmt.Printf("set elapsed: %0.2f s, sync elapsed %0.2f s\n", t1-t0, t2-t0)
 		fmt.Printf("set average: %0.2f µs, sync average %0.2f µs\n", (t1-t0)*1_000_000/float64(n*o.Size()), (t2-t0)*1_000_000/float64(n*o.Size()))
