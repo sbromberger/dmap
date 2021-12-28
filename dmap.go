@@ -80,14 +80,14 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 	// runtime.LockOSThread()
 	for {
 		recvbytes, status := dmap.o.MrecvBytes(mpi.AnySource, mpi.AnyTag)
-		dmap.msgCount.Lock()
-		dmap.msgCount.recv++
-		dmap.msgCount.Unlock()
-
 		tag := status.GetTag()
 		if tag == dmap.o.MaxTag {
 			return
 		}
+		dmap.msgCount.Lock()
+		dmap.msgCount.recv++
+		dmap.msgCount.Unlock()
+
 		b := bytes.NewReader(recvbytes)
 		dec := gob.NewDecoder(b)
 		var rmsg Message[K, V]
