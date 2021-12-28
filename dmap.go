@@ -184,6 +184,7 @@ func (m *DMap[K, V]) Stop() {
 	fmt.Printf("%d: sending done\n", m.myRank)
 	m.o.SendString("q", m.myRank, m.o.MaxTag)
 	fmt.Printf("%d: sent done\n", m.myRank)
+	<-m.Inbox
 }
 
 func (m *DMap[K, V]) GetCount() (uint64, uint64) {
