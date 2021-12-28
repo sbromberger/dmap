@@ -46,7 +46,8 @@ func EncodeMsg[K KeyType, V ValType](msg Message[K, V], b *bytes.Buffer) []byte 
 }
 
 type SafeCounter struct {
-	count int64
+	sent uint64
+	recv uint64
 	sync.RWMutex
 }
 type DMap[K KeyType, V ValType] struct {
@@ -73,7 +74,7 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 	for {
 		recvbytes, status := dmap.o.MrecvBytes(mpi.AnySource, mpi.AnyTag)
 		dmap.msgCount.Lock()
-		dmap.msgCount.count--
+		dmap.msgCount.recv++
 		dmap.msgCount.Unlock()
 
 		tag := status.GetTag()
@@ -104,7 +105,7 @@ func sendMsg[K KeyType, V ValType](d *DMap[K, V], msg *Message[K, V], dest int) 
 	fmt.Printf("%d: encoded message %v is %v; sending to %d\n", d.o.Rank(), *msg, encoded, dest)
 	d.o.SendBytes(encoded, dest, int(msg.Type))
 	d.msgCount.Lock()
-	d.msgCount.count++
+	d.msgCount.sent++
 	d.msgCount.Unlock()
 }
 
@@ -138,13 +139,14 @@ func (m *DMap[K, V]) Set(k K, v V) {
 }
 
 func (m *DMap[K, V]) Barrier() {
-	globalCt := make([]int64, 1)
-	globalCt[0] = -1
-	localCt := make([]int64, 1)
+	globalCt := make([]uint64, 2)
+	localCt := make([]uint64, 2)
 
-	for globalCt[0] != 0 {
-		localCt[0] = m.GetCount()
-		m.o.AllreduceInt64s(globalCt, localCt, mpi.OpSum, 0)
+	lastsent, lastrecv := uint64(1), uint64(1)
+	for globalCt[0] != globalCt[1] && globalCt[0] != lastsent && globalCt[1] != lastrecv {
+		lastsent, lastrecv = globalCt[0], globalCt[1]
+		localCt[0], localCt[1] = m.GetCount()
+		m.o.AllreduceUint64s(globalCt, localCt, mpi.OpSum, 0)
 		// fmt.Printf("%d: Barrier: local = %v, global = %v\n", m.myRank, localCt, globalCt)
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -155,8 +157,8 @@ func (m *DMap[K, V]) Stop() {
 	m.o.SendString("done", m.myRank, m.o.MaxTag)
 }
 
-func (m *DMap[K, V]) GetCount() int64 {
+func (m *DMap[K, V]) GetCount() (uint64, uint64) {
 	defer m.msgCount.RUnlock()
 	m.msgCount.RLock()
-	return m.msgCount.count
+	return m.msgCount.sent, m.msgCount.recv
 }
