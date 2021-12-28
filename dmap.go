@@ -5,7 +5,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
-	"runtime"
 	"sync"
 	"time"
 
@@ -78,13 +77,12 @@ func NewDMap[K KeyType, V ValType](o *mpi.Communicator) DMap[K, V] {
 
 func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 	defer close(dmap.Inbox)
-	defer fmt.Printf("%d: recv terminating\n", dmap.myRank)
-	runtime.LockOSThread()
+	// defer fmt.Printf("%d: recv terminating\n", dmap.myRank)
 	for {
 		recvbytes, status := dmap.o.MrecvBytes(mpi.AnySource, mpi.AnyTag)
 		tag := status.GetTag()
 		if tag == dmap.o.MaxTag {
-			fmt.Printf("%d: received maxtag\n", dmap.myRank)
+			// fmt.Printf("%d: received maxtag\n", dmap.myRank)
 			return
 		}
 		dmap.msgCount.Lock()
@@ -181,9 +179,9 @@ func (m *DMap[K, V]) Stop() {
 	// fmt.Println("in stop: pre-barrier")
 	m.Barrier()
 	// fmt.Println("in stop: post-barrier")
-	fmt.Printf("%d: sending done\n", m.myRank)
+	// fmt.Printf("%d: sending done\n", m.myRank)
 	m.o.SendString("q", m.myRank, m.o.MaxTag)
-	fmt.Printf("%d: sent done\n", m.myRank)
+	// fmt.Printf("%d: sent done\n", m.myRank)
 	<-m.Inbox
 }
 
