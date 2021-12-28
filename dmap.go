@@ -158,6 +158,7 @@ func (m *DMap[K, V]) Barrier() {
 
 	lastsent, lastrecv := uint64(1), uint64(1)
 	for (globalCt[0] != globalCt[1]) || (globalCt[0] != lastsent) || (globalCt[1] != lastrecv) {
+		m.o.Barrier()
 		lastsent, lastrecv = globalCt[0], globalCt[1]
 		localCt[0], localCt[1] = m.GetCount()
 		m.o.AllreduceUint64s(globalCt, localCt, mpi.OpSum, 0)
