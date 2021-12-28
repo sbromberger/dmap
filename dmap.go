@@ -107,7 +107,7 @@ func (d *DMap[K, V]) flushSend() {
 		sq.q = sq.q[:0]
 		sq.Unlock()
 	}
-	fmt.Printf("%d: called flushSend = sent %d msgs\n", d.myRank, ttlmsgs)
+	// fmt.Printf("%d: called flushSend = sent %d msgs\n", d.myRank, ttlmsgs)
 }
 
 func NewDMap[K KeyType, V ValType](o *mpi.Communicator, chansize int) DMap[K, V] {
@@ -164,7 +164,7 @@ func queueMsg[K KeyType, V ValType](d *DMap[K, V], msg Message[K, V], dest int) 
 	// fmt.Printf("%d: in queueMsg with msg %v\n", d.myRank, msg)
 	sq, found := d.sendQs[dest]
 	if !found {
-		fmt.Printf("%d: creating new sendQueue for dest %d\n", d.myRank, dest)
+		// fmt.Printf("%d: creating new sendQueue for dest %d\n", d.myRank, dest)
 		mq := MessageQueue[K, V]{}
 		d.sendQs[dest] = new(safeQueue[K, V])
 		d.sendQs[dest].q = mq
@@ -179,7 +179,7 @@ func queueMsg[K KeyType, V ValType](d *DMap[K, V], msg Message[K, V], dest int) 
 	sq.Unlock()
 	// fmt.Printf("%d: queued msg %v\n", d.myRank, msg)
 	if d.shouldFlush() {
-		fmt.Printf("%d: flushing\n", d.myRank)
+		// fmt.Printf("%d: flushing\n", d.myRank)
 		d.flushSend()
 	}
 }
