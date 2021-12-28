@@ -180,7 +180,9 @@ func (m *DMap[K, V]) Stop() {
 	// fmt.Println("in stop: pre-barrier")
 	m.Barrier()
 	// fmt.Println("in stop: post-barrier")
-	m.o.SendString("done", m.myRank, m.o.MaxTag)
+	fmt.Printf("%d: sending done\n", m.myRank)
+	m.o.SendString("q", m.myRank, m.o.MaxTag)
+	fmt.Printf("%d: sent done\n", m.myRank)
 }
 
 func (m *DMap[K, V]) GetCount() (uint64, uint64) {
