@@ -12,7 +12,7 @@ import (
 type key int
 
 func (k key) Hash() int {
-	return int(k)
+	return int(k) + 1
 }
 
 type val int
@@ -34,7 +34,7 @@ func main() {
 	myRank := o.Rank()
 	size := o.Size()
 
-	d := dmap.NewDMap[key, val](o)
+	d := dmap.NewDMap[key, val](o, n)
 
 	t0 := mpi.WorldTime()
 	for i := 0; i < n; i++ {
