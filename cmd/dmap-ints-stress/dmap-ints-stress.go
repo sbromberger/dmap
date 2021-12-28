@@ -12,7 +12,7 @@ import (
 type key int
 
 func (k key) Hash() int {
-	return int(k) + 1
+	return int(k)
 }
 
 type val int

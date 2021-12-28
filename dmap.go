@@ -13,7 +13,7 @@ import (
 
 type MsgType uint8
 
-const BUFSIZE = 1024 * 1024 * 32 // 32 MB
+const MAXQUEUESIZE = 1024 * 1024 // 1 million messages
 const (
 	MsgGet MsgType = iota
 	MsgSet
@@ -55,12 +55,59 @@ type SafeMap[K KeyType, V ValType] struct {
 	Map map[K]V
 	sync.RWMutex
 }
+
+type MessageQueue[K KeyType, V ValType] []Message[K, V]
+
+type safeQueue[K KeyType, V ValType] struct {
+	q MessageQueue[K, V]
+	sync.RWMutex
+}
+
 type DMap[K KeyType, V ValType] struct {
 	o        *mpi.Communicator
 	Map      *SafeMap[K, V]
 	myRank   int
 	Inbox    chan Message[K, V]
 	msgCount *SafeCounter
+	sendQs   map[int]*safeQueue[K, V]
+}
+
+func (d *DMap[K, V]) totalQueueLength() int {
+	var a int
+	for _, sq := range d.sendQs {
+		sq.RLock()
+		a += len(sq.q)
+		sq.RUnlock()
+	}
+	return a
+}
+
+func (d *DMap[K, V]) shouldFlush() bool {
+	return d.totalQueueLength() > MAXQUEUESIZE
+}
+
+func (d *DMap[K, V]) flushSend() {
+	var b bytes.Buffer
+	var ttlmsgs uint64
+	enc := gob.NewEncoder(&b)
+	for dest, sq := range d.sendQs {
+		sq.Lock()
+		err := enc.Encode(sq.q)
+
+		if err != nil {
+			fmt.Printf("ERROR IN ENCODE: %v", err)
+			log.Fatal("error in encode: ", err)
+		}
+		d.o.SendBytes(b.Bytes(), dest, 0)
+		d.msgCount.Lock()
+		d.msgCount.sent += uint64(len(sq.q))
+		d.msgCount.Unlock()
+		ttlmsgs += uint64(len(sq.q))
+		b.Reset()
+		sq.q = sq.q[:0]
+		sq.Unlock()
+	}
+	fmt.Printf("%d: called flushSend = sent %d msgs\n", d.myRank, ttlmsgs)
 }
 
 func NewDMap[K KeyType, V ValType](o *mpi.Communicator, chansize int) DMap[K, V] {
@@ -69,9 +116,10 @@ func NewDMap[K KeyType, V ValType](o *mpi.Communicator, chansize int) DMap[K, V]
 	sm := new(SafeMap[K, V])
 	sm.Map = make(map[K]V)
 
-	dm := DMap[K, V]{o: o, Map: sm, myRank: r, Inbox: inbox, msgCount: new(SafeCounter)}
+	sendQs := make(map[int]*safeQueue[K, V])
+	dm := DMap[K, V]{o: o, Map: sm, myRank: r, Inbox: inbox, msgCount: new(SafeCounter), sendQs: sendQs}
 	go recv(dm)
-	gob.Register(Message[K, V]{})
+	gob.Register(MessageQueue[K, V]{})
 	return dm
 }
 
@@ -85,38 +133,55 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 			// fmt.Printf("%d: received maxtag\n", dmap.myRank)
 			return
 		}
-		dmap.msgCount.Lock()
-		dmap.msgCount.recv++
-		dmap.msgCount.Unlock()
-
 		b := bytes.NewReader(recvbytes)
 		dec := gob.NewDecoder(b)
-		var rmsg Message[K, V]
-		if err := dec.Decode(&rmsg); err != nil {
+		var messageQ MessageQueue[K, V]
+		if err := dec.Decode(&messageQ); err != nil {
 			fmt.Printf("ERROR IN DECODE: %v", err)
 			log.Fatal("decode error: ", err)
 		}
-		switch tag {
-		case int(MsgGet):
-			// fmt.Printf("%d: received get %v\n", dmap.myRank, rmsg.Key)
-			dmap.Inbox <- rmsg
-		case int(MsgSet):
-			// fmt.Printf("%d: received set %v -> %v\n", dmap.myRank, rmsg.Key, rmsg.Val)
-			dmap.Map.Lock()
-			dmap.Map.Map[rmsg.Key] = rmsg.Val
-			dmap.Map.Unlock()
-		default:
-			log.Fatal("invalid message type: ", tag)
+		for _, msg := range messageQ {
+			switch msg.Type {
+			case MsgGet:
+				// fmt.Printf("%d: received get %v\n", dmap.myRank, rmsg.Key)
+				dmap.Inbox <- msg
+			case MsgSet:
+				// fmt.Printf("%d: received set %v -> %v\n", dmap.myRank, rmsg.Key, rmsg.Val)
+				dmap.Map.Lock()
+				dmap.Map.Map[msg.Key] = msg.Val
+				dmap.Map.Unlock()
+			default:
+				log.Fatal("invalid message type: ", tag)
+			}
 		}
+		dmap.msgCount.Lock()
+		dmap.msgCount.recv += uint64(len(messageQ))
+		dmap.msgCount.Unlock()
 	}
 }
-func sendMsg[K KeyType, V ValType](d *DMap[K, V], msg *Message[K, V], dest int) {
-	encoded := EncodeMsg(*msg)
+func queueMsg[K KeyType, V ValType](d *DMap[K, V], msg Message[K, V], dest int) {
 	// fmt.Printf("%d: encoded message %v is %v; sending to %d\n", d.o.Rank(), *msg, encoded, dest)
-	d.o.SendBytes(encoded, dest, int(msg.Type))
-	d.msgCount.Lock()
-	d.msgCount.sent++
-	d.msgCount.Unlock()
+	// fmt.Printf("%d: in queueMsg with msg %v\n", d.myRank, msg)
+	sq, found := d.sendQs[dest]
+	if !found {
+		fmt.Printf("%d: creating new sendQueue for dest %d\n", d.myRank, dest)
+		mq := MessageQueue[K, V]{}
+		d.sendQs[dest] = new(safeQueue[K, V])
+		d.sendQs[dest].q = mq
+		sq = d.sendQs[dest]
+	}
+	// fmt.Printf("%d: sq = %v\n", d.myRank, sq)
+	// fmt.Printf("%d: sendQs = %v\n", d.myRank, sq.q)
+	sq.Lock()
+	// fmt.Printf("%d: locked\n", d.myRank)
+	sq.q = append(sq.q, msg)
+	// fmt.Printf("%d: appended\n", d.myRank)
+	sq.Unlock()
+	// fmt.Printf("%d: queued msg %v\n", d.myRank, msg)
+	if d.shouldFlush() {
+		fmt.Printf("%d: flushing\n", d.myRank)
+		d.flushSend()
+	}
 }
 
 func (m *DMap[K, V]) Get(k K) (V, bool) {
@@ -128,7 +193,7 @@ func (m *DMap[K, V]) Get(k K) (V, bool) {
 		return val, found
 	}
 	msg := Message[K, V]{Type: MsgGet, Key: k}
-	sendMsg(m, &msg, dest)
+	queueMsg(m, msg, dest)
 	rmsg := <-m.Inbox
 	if rmsg.Val.Empty() {
 		var val V
@@ -141,6 +206,7 @@ func (m *DMap[K, V]) Get(k K) (V, bool) {
 func (m *DMap[K, V]) Set(k K, v V) {
 	dest := k.Hash() % m.o.Size()
 	if dest == m.myRank {
+		// fmt.Printf("hash = %d, size = %d, adding local\n", k.Hash(), m.o.Size())
 		m.Map.Lock()
 		m.Map.Map[k] = v
 		m.Map.Unlock()
@@ -148,7 +214,8 @@ func (m *DMap[K, V]) Set(k K, v V) {
 	}
 	msg := Message[K, V]{Type: MsgSet, Key: k, Val: v}
 	// fmt.Printf("%d: sending set msg to %d: %v -> %v\n", m.myRank, dest, k, v)
-	sendMsg(m, &msg, dest)
+	// fmt.Printf("hash = %d, size = %d, queuing to %d\n", k.Hash(), m.o.Size(), dest)
+	queueMsg(m, msg, dest)
 	return
 }
 
@@ -158,6 +225,7 @@ func (m *DMap[K, V]) Barrier() {
 
 	lastsent, lastrecv := uint64(1), uint64(1)
 	for (globalCt[0] != globalCt[1]) || (globalCt[0] != lastsent) || (globalCt[1] != lastrecv) {
+		m.flushSend()
 		m.o.Barrier()
 		lastsent, lastrecv = globalCt[0], globalCt[1]
 		localCt[0], localCt[1] = m.GetCount()
