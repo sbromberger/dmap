@@ -83,6 +83,7 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 		recvbytes, status := dmap.o.MrecvBytes(mpi.AnySource, mpi.AnyTag)
 		tag := status.GetTag()
 		if tag == dmap.o.MaxTag {
+			fmt.Printf("%d: received maxtag\n", dmap.myRank)
 			return
 		}
 		dmap.msgCount.Lock()
