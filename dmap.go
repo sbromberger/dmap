@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mpi "github.com/sbromberger/gompi"
@@ -64,12 +65,13 @@ type safeQueue[K KeyType, V ValType] struct {
 }
 
 type DMap[K KeyType, V ValType] struct {
-	o        *mpi.Communicator
-	Map      *SafeMap[K, V]
-	myRank   int
-	Inbox    chan Message[K, V]
-	msgCount *SafeCounter
-	sendQs   map[int]*safeQueue[K, V]
+	o          *mpi.Communicator
+	Map        *SafeMap[K, V]
+	myRank     int
+	Inbox      chan Message[K, V]
+	msgCount   *SafeCounter
+	sendQs     map[int]*safeQueue[K, V]
+	totalQSize uint64
 }
 
 func (d *DMap[K, V]) totalQueueLength() int {
@@ -83,7 +85,7 @@ func (d *DMap[K, V]) totalQueueLength() int {
 }
 
 func (d *DMap[K, V]) shouldFlush() bool {
-	return d.totalQueueLength() > MAXQUEUESIZE
+	return d.totalQSize > MAXQUEUESIZE
 }
 
 func (d *DMap[K, V]) flushSend() {
@@ -99,15 +101,15 @@ func (d *DMap[K, V]) flushSend() {
 			log.Fatal("error in encode: ", err)
 		}
 		d.o.SendBytes(b.Bytes(), dest, 0)
-		d.msgCount.Lock()
-		d.msgCount.sent += uint64(len(sq.q))
-		d.msgCount.Unlock()
-		ttlmsgs += uint64(len(sq.q))
+		lenSq := uint64(len(sq.q))
+		atomic.AddUint64(&d.msgCount.sent, lenSq)
+		ttlmsgs += lenSq
 		b.Reset()
 		sq.q = sq.q[:0]
 		sq.Unlock()
 	}
 	// fmt.Printf("%d: called flushSend = sent %d msgs\n", d.myRank, ttlmsgs)
+	atomic.StoreUint64(&d.totalQSize, uint64(0))
 }
 
 func NewDMap[K KeyType, V ValType](o *mpi.Communicator, chansize int) DMap[K, V] {
@@ -154,9 +156,7 @@ func recv[K KeyType, V ValType](dmap DMap[K, V]) {
 				log.Fatal("invalid message type: ", tag)
 			}
 		}
-		dmap.msgCount.Lock()
-		dmap.msgCount.recv += uint64(len(messageQ))
-		dmap.msgCount.Unlock()
+		atomic.AddUint64(&dmap.msgCount.recv, uint64(len(messageQ)))
 	}
 }
 func queueMsg[K KeyType, V ValType](d *DMap[K, V], msg Message[K, V], dest int) {
@@ -177,6 +177,7 @@ func queueMsg[K KeyType, V ValType](d *DMap[K, V], msg Message[K, V], dest int) 
 	sq.q = append(sq.q, msg)
 	// fmt.Printf("%d: appended\n", d.myRank)
 	sq.Unlock()
+	atomic.AddUint64(&d.totalQSize, 1)
 	// fmt.Printf("%d: queued msg %v\n", d.myRank, msg)
 	if d.shouldFlush() {
 		// fmt.Printf("%d: flushing\n", d.myRank)
