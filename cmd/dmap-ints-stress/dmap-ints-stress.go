@@ -29,9 +29,9 @@ func main() {
 	}
 
 	mpi.Start(true)
-	fmt.Println("started")
 	o := mpi.NewCommunicator(nil)
 	myRank := o.Rank()
+	fmt.Printf("%d: startedn\n", myRank)
 	size := o.Size()
 
 	d := dmap.NewDMap[key, val](o, n)
@@ -39,20 +39,16 @@ func main() {
 	t0 := mpi.WorldTime()
 	for i := 0; i < n; i++ {
 		k := i*size + myRank + 1
-		// k := i*size + myRank
-		v := k
-		d.Set(key(k), val(v))
+		d.Set(key(k), val(k))
 
 	}
 	t1 := mpi.WorldTime()
 
-	// fmt.Println("pre-barrier")
-	d.Stop()
-	// fmt.Println("post-barrier")
 	t2 := mpi.WorldTime()
+	d.Stop()
 	for i := 0; i < o.Size(); i++ {
 		if myRank == i {
-			fmt.Printf("%d: %d\n", i, len(d.Map.Map))
+			fmt.Printf("%d: LocalSize %d\n", i, d.LocalSize())
 			// fmt.Printf("***************** %d: %v\n", i, d.Map.Map)
 		}
 	}
