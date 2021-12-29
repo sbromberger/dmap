@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sbromberger/dmap/safemap"
 	mpi "github.com/sbromberger/gompi"
 )
 
@@ -21,74 +22,27 @@ const (
 	MsgSet                // Set
 )
 
-// KeyType is anything that is comparable that has a Hash() function.
-// The Hash() function returns an int; the rank is determined by modulus.
-type KeyType interface {
-	comparable
-	Hash() int
-}
-
-// ValType is anything that implements an Empty() function.
-// The Empty() function is designed to return true if the value doesn't exist.
-type ValType interface {
-	Empty() bool
-}
-
 // Message is the unit of communication between ranks.
-type Message[K KeyType, V ValType] struct {
+type Message[K safemap.KeyType, V safemap.ValType] struct {
 	Type MsgType
 	Key  K
 	Val  V
 }
 
-// SafeMap is a thread-safe map protected by a mutex.
-type SafeMap[K KeyType, V ValType] struct {
-	mu sync.RWMutex
-	mp map[K]V
-}
-
-// NewSafeMap creates a new SafeMap
-func NewSafeMap[K KeyType, V ValType]() *SafeMap[K, V] {
-	return &SafeMap[K, V]{mp: make(map[K]V)}
-}
-
-// Set sets a key/value pair on a SafeMap.
-func (sm *SafeMap[K, V]) Set(k K, v V) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.mp[k] = v
-}
-
-// Get retrieves a value from a SafeMap along with a boolean indicating
-// whether the key existed.
-func (sm *SafeMap[K, V]) Get(k K) (V, bool) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	v, found := sm.mp[k]
-	return v, found
-}
-
-// Size returns the number of entries in the SafeMap.
-func (sm *SafeMap[K, V]) Size() uint64 {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return uint64(len(sm.mp))
-}
-
 // messageQueue is just a slice of messages.
-type messageQueue[K KeyType, V ValType] []Message[K, V]
+type messageQueue[K safemap.KeyType, V safemap.ValType] []Message[K, V]
 
 // safeQueue implements a lockable messageQueue.
 // We embed the mutex here since this struct is not exported.
-type safeQueue[K KeyType, V ValType] struct {
+type safeQueue[K safemap.KeyType, V safemap.ValType] struct {
 	q messageQueue[K, V]
 	sync.RWMutex
 }
 
 // DMap represents one piece of a distributed map.
-type DMap[K KeyType, V ValType] struct {
+type DMap[K safemap.KeyType, V safemap.ValType] struct {
 	o                  *mpi.Communicator
-	Map                *SafeMap[K, V]
+	Map                *safemap.SafeMap[K, V]
 	myRank             int
 	Inbox              chan Message[K, V]
 	msgsSent, msgsRecv uint64 // do not access these directly; they're atomics.
@@ -128,11 +82,11 @@ func (d *DMap[K, V]) flushSend() {
 	atomic.StoreUint64(&d.totalQSize, uint64(0))
 }
 
-// NewDMap creates a new distributed map.
-func NewDMap[K KeyType, V ValType](o *mpi.Communicator, chansize int) *DMap[K, V] {
+// New returns a pointer to a newly-created distributed map.
+func New[K safemap.KeyType, V safemap.ValType](o *mpi.Communicator, chansize int) *DMap[K, V] {
 	r := o.Rank()
 	inbox := make(chan Message[K, V], chansize)
-	sm := NewSafeMap[K, V]()
+	sm := safemap.New[K, V]()
 
 	sendQs := make(map[int]*safeQueue[K, V])
 	dm := DMap[K, V]{o: o, Map: sm, myRank: r, Inbox: inbox, sendQs: sendQs}
@@ -142,7 +96,7 @@ func NewDMap[K KeyType, V ValType](o *mpi.Communicator, chansize int) *DMap[K, V
 }
 
 // recv is a goroutine that performs asynchronous message dispatch.
-func recv[K KeyType, V ValType](dmap *DMap[K, V]) {
+func recv[K safemap.KeyType, V safemap.ValType](dmap *DMap[K, V]) {
 	defer close(dmap.Inbox)
 	// defer fmt.Printf("%d: recv terminating\n", dmap.myRank)
 	for {
@@ -182,7 +136,7 @@ func recv[K KeyType, V ValType](dmap *DMap[K, V]) {
 }
 
 // queueMsg adds a message to a given sendQueue.
-func queueMsg[K KeyType, V ValType](d *DMap[K, V], msg Message[K, V], dest int) {
+func queueMsg[K safemap.KeyType, V safemap.ValType](d *DMap[K, V], msg Message[K, V], dest int) {
 	// fmt.Printf("%d: encoded message %v is %v; sending to %d\n", d.o.Rank(), *msg, encoded, dest)
 	// fmt.Printf("%d: in queueMsg with msg %v\n", d.myRank, msg)
 	sq, found := d.sendQs[dest]
