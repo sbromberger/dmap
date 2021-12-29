@@ -34,7 +34,7 @@ func main() {
 	fmt.Printf("%d: startedn\n", myRank)
 	size := o.Size()
 
-	d := dmap.NewDMap[key, val](o, n)
+	d := dmap.New[key, val](o, n)
 
 	t0 := mpi.WorldTime()
 	for i := 0; i < n; i++ {

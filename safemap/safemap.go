@@ -1,6 +1,9 @@
 package safemap
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // KeyType is anything that is comparable that has a Hash() function.
 // The Hash() function returns an int; the rank is determined by modulus.
@@ -19,6 +22,12 @@ type ValType interface {
 type SafeMap[K KeyType, V ValType] struct {
 	mu sync.RWMutex
 	mp map[K]V
+}
+
+func (m *SafeMap[K, V]) String() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return fmt.Sprintf("%v", m.mp)
 }
 
 // New creates a new SafeMap
